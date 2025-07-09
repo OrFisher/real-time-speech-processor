@@ -1,0 +1,17 @@
+# Python
+*.pyc
+__pycache__/
+venv/
+.env # Make sure this line is present
+secrets.txt
+filter_script.py
+
+# Django
+db.sqlite3
+/staticfiles/
+/media/
+
+# IDEs
+.idea/
+.vscode/
+*.swp

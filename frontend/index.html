@@ -1,0 +1,86 @@
+<!-- frontend/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Speech Processor</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+        }
+        .highlight {
+            background-color: #fcd34d; /* Tailwind yellow-300 */
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+        .alert-box {
+            animation: fadeOut 5s forwards;
+        }
+        @keyframes fadeOut {
+            0% { opacity: 1; transform: translateY(0); }
+            80% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-20px); display: none; }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center py-8">
+    <div class="container mx-auto px-4 w-full max-w-4xl">
+        <h1 class="text-4xl font-bold text-center text-gray-800 mb-8">Real-time Speech Processor</h1>
+
+        <div class="bg-white shadow-lg rounded-xl p-6 mb-8">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Control Panel</h2>
+            <div class="flex flex-wrap items-center justify-center gap-4 mb-6">
+                <button id="startRecording" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75">
+                    Start Recording (Prospect)
+                </button>
+                <button id="stopRecording" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-opacity-75" disabled>
+                    Stop Recording
+                </button>
+                <select id="speakerType" class="py-3 px-4 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                    <option value="prospect">Prospect</option>
+                    <option value="agent">Agent</option>
+                    <option value="unknown">Unknown</option>
+                </select>
+                <button id="uploadAudio" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-opacity-75">
+                    Upload Audio File
+                </button>
+                <input type="file" id="audioFileInput" accept="audio/*" class="hidden">
+            </div>
+
+            <div class="mb-6">
+                <h3 class="text-xl font-medium text-gray-700 mb-2">Configure Keywords:</h3>
+                <div id="keywordList" class="flex flex-wrap gap-2 mb-4">
+                    <!-- Keywords will be loaded here -->
+                </div>
+                <div class="flex gap-2">
+                    <input type="text" id="newKeywordInput" placeholder="Add new keyword" class="flex-grow py-2 px-4 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                    <input type="text" id="newTalkingPointInput" placeholder="Talking point (optional)" class="flex-grow py-2 px-4 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                    <button id="addKeyword" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-opacity-75">Add</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div class="bg-white shadow-lg rounded-xl p-6">
+                <h2 class="text-2xl font-semibold text-gray-700 mb-4">Real-time Transcription</h2>
+                <div id="transcriptionDisplay" class="border border-gray-300 rounded-lg p-4 h-64 overflow-y-auto bg-gray-50 text-gray-800 text-lg leading-relaxed">
+                    <p class="text-gray-500">Transcription will appear here...</p>
+                </div>
+            </div>
+
+            <div class="bg-white shadow-lg rounded-xl p-6">
+                <h2 class="text-2xl font-semibold text-gray-700 mb-4">Keyword Alerts</h2>
+                <div id="alertDisplay" class="border border-gray-300 rounded-lg p-4 h-64 overflow-y-auto bg-gray-50">
+                    <p class="text-gray-500">Alerts will appear here...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
