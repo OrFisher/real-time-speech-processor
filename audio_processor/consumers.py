@@ -7,9 +7,10 @@ import uuid
 import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
-from .tasks import process_audio_chunk # Assuming process_audio_chunk is still relevant
+from asgiref.sync import async_to_sync, sync_to_async # Keep this import, it's used for group_send
+from .tasks import process_audio_chunk, TEST_REDIS_CHANNEL # Import the test channel name
 from django.conf import settings
+import redis.asyncio as aioredis # Import async redis client
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +28,15 @@ class AudioConsumer(AsyncWebsocketConsumer):
         self.processing_task = None
         self.channel_layer = get_channel_layer()
         logger.info("AudioConsumer initialized.")
-        logger.debug(f"AudioConsumer channel layer instance: {self.channel_layer}")
+        logger.debug(f"AudioConsumer channel layer instance in __init__: {self.channel_layer}")
+        self.redis_pubsub = None # For direct Redis pubsub
+        self.redis_client = None # Initialize redis_client
 
     async def connect(self):
         self.session_id = self.scope['url_route']['kwargs']['session_id']
         logger.info(f"WebSocket connected for session: {self.session_id}")
 
-        # Join session group
+        # Join session group (keep this for original Channels functionality)
         logger.debug(f"Attempting to add channel {self.channel_name} to group {self.session_id}")
         await self.channel_layer.group_add(
             self.session_id,
@@ -43,7 +46,6 @@ class AudioConsumer(AsyncWebsocketConsumer):
         await self.accept()
 
         # --- Self-test: Send a message from the consumer to its own group ---
-        # This confirms the channel layer is working for this consumer instance.
         test_message = {
             'type': 'test_message_from_consumer',
             'message': 'Consumer self-test message received!'
@@ -54,6 +56,26 @@ class AudioConsumer(AsyncWebsocketConsumer):
             test_message
         )
         # -------------------------------------------------------------------------
+
+        # --- Direct Redis SUBSCRIBE (Temporary Test) ---
+        try:
+            # Ping Redis directly to verify connectivity before subscribing
+            redis_ping_client = aioredis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=0)
+            await redis_ping_client.ping()
+            logger.info(f"Consumer: Successfully pinged Redis at {settings.REDIS_HOST}:{settings.REDIS_PORT}")
+            await redis_ping_client.close() # Close the ping client
+
+            self.redis_client = aioredis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=0)
+            self.redis_pubsub = self.redis_client.pubsub()
+            await self.redis_pubsub.subscribe(TEST_REDIS_CHANNEL)
+            logger.info(f"Consumer: Successfully subscribed to direct Redis channel '{TEST_REDIS_CHANNEL}'.")
+            # Start a listener task for this direct channel
+            self.direct_redis_listener_task = asyncio.create_task(self.listen_to_direct_redis_channel())
+        except Exception as e:
+            logger.error(f"Consumer: Error subscribing to direct Redis channel: {e}")
+            import traceback
+            logger.error(f"Consumer: Traceback for direct Redis subscribe error: {traceback.format_exc()}")
+        # -----------------------------------------------
 
         # Start a periodic task to process the audio buffer
         self.processing_task = asyncio.create_task(self.process_buffer_periodically())
@@ -68,9 +90,24 @@ class AudioConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
         logger.debug(f"Successfully discarded channel {self.channel_name} from group {self.session_id}")
+
         if self.processing_task:
             self.processing_task.cancel()
             logger.info(f"Cancelled periodic buffer processing task for session: {self.session_id}")
+
+        # Cancel direct Redis listener task
+        if self.direct_redis_listener_task:
+            self.direct_redis_listener_task.cancel()
+            logger.info(f"Cancelled direct Redis listener task for session: {self.session_id}")
+        if self.redis_pubsub:
+            await self.redis_pubsub.unsubscribe(TEST_REDIS_CHANNEL)
+            await self.redis_pubsub.close()
+            logger.info(f"Unsubscribed and closed direct Redis pubsub for session: {self.session_id}")
+        if self.redis_client:
+            await self.redis_client.close()
+            logger.info(f"Closed direct Redis client for session: {self.session_id}")
+
+
         # Process any remaining audio in the buffer
         await self.process_audio_buffer(force_send=True)
         logger.info(f"Final buffer processing initiated on disconnect for session: {self.session_id}")
@@ -112,6 +149,7 @@ class AudioConsumer(AsyncWebsocketConsumer):
 
             # Only send if buffer size is significant or forced (on disconnect)
             MIN_BUFFER_SIZE_FOR_SEND = 16000 * 2 * 1 # 32000 bytes for 1 second of 16-bit mono 16kHz audio
+
             if current_buffer_size < MIN_BUFFER_SIZE_FOR_SEND and not force_send:
                 logger.debug(f"Buffer size ({current_buffer_size}) below threshold ({MIN_BUFFER_SIZE_FOR_SEND}) and not forced for session {self.session_id}.")
                 return
@@ -128,8 +166,43 @@ class AudioConsumer(AsyncWebsocketConsumer):
             )
             logger.debug(f"Celery task process_audio_chunk.delay() invoked for session {self.session_id}.")
 
-    # --- Specific Handler for the self-test message ---
-    # Channels will automatically call this method if a message with 'type': 'test_message_from_consumer' is received.
+    # --- Listener for direct Redis channel (NEW) ---
+    async def listen_to_direct_redis_channel(self):
+        """
+        Listens for messages on the direct Redis channel and sends them to the client.
+        """
+        logger.info(f"Consumer: Starting listener for direct Redis channel '{TEST_REDIS_CHANNEL}' for session {self.session_id}.")
+        while True:
+            try:
+                message = await self.redis_pubsub.get_message(ignore_subscribe_messages=True, timeout=1)
+                if message:
+                    logger.info(f"Consumer: Received direct Redis message on channel '{message['channel']}': {message['data']}")
+                    try:
+                        parsed_data = json.loads(message['data'])
+                        # Send this direct message to the client
+                        await self.send(text_data=json.dumps({
+                            'type': 'direct_redis_message', # A new type for browser handling
+                            'data': parsed_data
+                        }))
+                        logger.info(f"Consumer: Sent direct Redis message to client for session {self.session_id}.")
+                    except json.JSONDecodeError:
+                        logger.error(f"Consumer: Could not decode JSON from direct Redis message: {message['data']}")
+                    except Exception as e:
+                        logger.error(f"Consumer: Error sending direct Redis message to client: {e}")
+                        import traceback
+                        logger.error(f"Consumer: Traceback for direct Redis send error: {traceback.format_exc()}")
+                await asyncio.sleep(0.01) # Small sleep to prevent busy-waiting
+            except asyncio.CancelledError:
+                logger.info(f"Consumer: Direct Redis listener task cancelled for session {self.session_id}.")
+                break
+            except Exception as e:
+                logger.error(f"Consumer: Error in direct Redis listener: {e}")
+                import traceback
+                logger.error(f"Consumer: Traceback for direct Redis listener error: {traceback.format_exc()}")
+                await asyncio.sleep(1) # Wait before retrying
+
+
+    # Specific Handler for the self-test message
     async def test_message_from_consumer(self, event):
         """
         Handler for the self-test message received from the channel layer.
@@ -144,11 +217,10 @@ class AudioConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             logger.error(f"Consumer self-test: Error sending response to client: {e}")
             import traceback
-            logger.error(f"Consumer self-test: Traceback for send_response error: {traceback.format_exc()}")
+            logger.error(f"Traceback for send_response error: {traceback.format_exc()}")
 
 
     # Receive messages from session group (transcriptions, alerts)
-    # Channels will automatically call this method if a message with 'type': 'send_transcription' is received.
     async def send_transcription(self, event):
         """
         Handles sending transcription updates to the client.
@@ -167,7 +239,6 @@ class AudioConsumer(AsyncWebsocketConsumer):
             logger.error(f"Traceback for send_transcription error: {traceback.format_exc()}")
 
 
-    # Channels will automatically call this method if a message with 'type': 'send_alert' is received.
     async def send_alert(self, event):
         """
         Handles sending keyword alerts to the client.

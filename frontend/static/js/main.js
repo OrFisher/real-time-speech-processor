@@ -33,12 +33,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
+            console.log('Test WebSocket message received:', data); // Log all incoming messages
             if (data.type === 'transcription') {
                 displayTranscription(data.data.text, data.data.speaker_type);
             } else if (data.type === 'alert') {
                 displayAlert(data.data.keyword, data.data.talking_point, data.data.full_text, data.data.speaker_type);
-            } else if (data.type === 'self_test_response') { // Added for self-test feedback
+            } else if (data.type === 'self_test_response') { // Handle consumer self-test response
                 console.log('Consumer self-test successful! Message:', data.data);
+            } else if (data.type === 'direct_redis_message') { // NEW: Handle direct Redis message
+                console.log('Direct Redis message received:', data.data.message);
+                displayTranscription(`[Direct Redis Test] ${data.data.message}`, 'system');
             }
         };
 
@@ -66,12 +70,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             console.log('Microphone access granted. Stream:', stream);
 
-            // Explicitly specify the MIME type and codec for MediaRecorder
-            // Use 'audio/webm;codecs=opus' as it's widely supported and efficient
             const options = { mimeType: 'audio/webm;codecs=opus' };
             if (!MediaRecorder.isTypeSupported(options.mimeType)) {
                 console.warn(`${options.mimeType} is not supported, trying default.`);
-                // Fallback to default if not supported
                 mediaRecorder = new MediaRecorder(stream);
             } else {
                 mediaRecorder = new MediaRecorder(stream, options);
@@ -103,7 +104,8 @@ document.addEventListener('DOMContentLoaded', () => {
             mediaRecorder.onerror = (event) => {
                 console.error('MediaRecorder error:', event.error);
                 const errorMessage = `MediaRecorder error: ${event.error.name} - ${event.error.message}`;
-                console.error('Recording Error: ' + errorMessage); // Using console.error instead of alert
+                console.error(errorMessage);
+                alert('Recording Error: ' + errorMessage);
             };
 
             mediaRecorder.start(1000); // Start recording, collect data every 1 second
@@ -118,7 +120,8 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error('Error accessing microphone:', error);
             const errorMessage = 'Could not start recording. Please ensure microphone access is granted.';
-            console.error('Microphone Access Error: ' + errorMessage); // Using console.error instead of alert
+            console.error(errorMessage);
+            alert('Microphone Access Error: ' + errorMessage);
             startRecordingBtn.disabled = false;
             stopRecordingBtn.disabled = true;
         }

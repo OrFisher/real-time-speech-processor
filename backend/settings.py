@@ -1,30 +1,9 @@
 # backend/settings.py
 
 import os
-import sys
 from pathlib import Path
 from dotenv import load_dotenv
-import urllib.parse
-
-# --- IMPORTANT: Add virtual environment's site-packages to sys.path ---
-# This helps Celery and other processes find packages correctly on Windows.
-# Determine the path to the virtual environment's site-packages
-# Assumes 'venv' is in the project root.
-venv_path = os.path.join(Path(__file__).resolve().parent.parent, 'venv')
-
-# Common paths for site-packages in virtual environments
-site_packages_paths = [
-    os.path.join(venv_path, 'Lib', 'site-packages'), # Windows
-    os.path.join(venv_path, 'lib', f'python{sys.version_info.major}.{sys.version_info.minor}', 'site-packages'), # Linux/macOS
-]
-
-for sp_path in site_packages_paths:
-    if os.path.exists(sp_path) and sp_path not in sys.path:
-        sys.path.insert(0, sp_path)
-        break
-
-# ---------------------------------------------------------------------
-
+import urllib.parse # Import urllib.parse to parse the Redis URL
 
 # Load environment variables from .env file
 load_dotenv()
@@ -150,35 +129,50 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles') # This directory will hold c
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Channels settings
-# Use a simple host/port for direct connection if REDIS_URL is not complex
-REDIS_HOST = os.environ.get('REDIS_HOST', '127.0.0.1') # CHANGED FROM 'localhost' TO '127.0.0.1'
-REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
+# Get Redis URL from environment or use default
+REDIS_URL_STR = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+
+# Parse the Redis URL to extract host and port
+# This ensures explicit host/port are passed to channels_redis
+parsed_redis_url = urllib.parse.urlparse(REDIS_URL_STR)
+REDIS_HOST = parsed_redis_url.hostname
+REDIS_PORT = parsed_redis_url.port if parsed_redis_url.port else 6379 # Default Redis port
 
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.pubsub.RedisPubSubChannelLayer',
         'CONFIG': {
-            "hosts": [f"redis://{REDIS_HOST}:{REDIS_PORT}/0"], # Use f-string for clarity
+            "hosts": [{
+                'host': REDIS_HOST,
+                'port': REDIS_PORT,
+                'db': 0 # Assuming database 0 from the default URL
+            }],
         },
     },
 }
 
 # Celery settings
-CELERY_BROKER_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0" # Use f-string for clarity
-CELERY_RESULT_BACKEND = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+CELERY_BROKER_URL = REDIS_URL_STR # Keep using the URL string for Celery
+CELERY_RESULT_BACKEND = REDIS_URL_STR
 CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
+CELERY_TASK_SERIALIZER = 'json' # CORRECTED THIS LINE - Removed the extra ']'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
-CELERY_IMPORTS = ('audio_processor.tasks',)
-CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_IMPORTS = ('audio_processor.tasks',) # Ensure Celery finds your tasks
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True # Ensure Celery retries connection on startup
 
 # OpenAI API Key
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 if not OPENAI_API_KEY:
     print("WARNING: OPENAI_API_KEY not set in environment variables.")
 
-# Keyword configuration
+# OpenAI Organization and Project IDs
+OPENAI_ORGANIZATION_ID = os.environ.get('OPENAI_ORGANIZATION_ID')
+OPENAI_PROJECT_ID = os.environ.get('OPENAI_PROJECT_ID')
+
+
+# Keyword configuration (can be moved to DB for dynamic management)
+# For now, a simple list
 DEFAULT_KEYWORDS = [
     "pricing", "cost", "budget", "discount", "feature", "solution",
     "problem", "challenge", "competitor", "roadmap", "integration",
@@ -201,7 +195,7 @@ LOGGING = {
     },
     'handlers': {
         'console': {
-            'level': 'DEBUG',
+            'level': 'DEBUG', # Set console handler to DEBUG to see all messages
             'class': 'logging.StreamHandler',
             'formatter': 'simple'
         },
@@ -209,45 +203,70 @@ LOGGING = {
     'loggers': {
         'django': {
             'handlers': ['console'],
-            'level': 'INFO',
+            'level': 'INFO', # Django's default logs
             'propagate': False,
         },
-        'audio_processor': {
+        'django.request': { # For HTTP requests (4xx, 5xx errors)
             'handlers': ['console'],
-            'level': 'DEBUG',
+            'level': 'WARNING',
             'propagate': False,
         },
-        'channels': {
+        'audio_processor': { # Your custom app's logger
+            'handlers': ['console'],
+            'level': 'DEBUG', # Set to DEBUG to see all custom app logs
+            'propagate': False,
+        },
+        'channels': { # Django Channels internal logs
             'handlers': ['console'],
             'level': 'DEBUG', # Keep DEBUG for Channels to see dispatching
             'propagate': False,
         },
-        'channels_redis': {
+        'channels_redis': { # Channels Redis backend logs
             'handlers': ['console'],
             'level': 'DEBUG', # Set to DEBUG to see Redis interaction
             'propagate': False,
         },
-        'celery': {
+        'celery': { # Celery overall logs
+            'handlers': ['console'],
+            'level': 'INFO', # Celery's default logs
+            'propagate': False,
+        },
+        'celery.app.trace': { # Celery task execution traces
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
-        'celery.app.trace': {
+        'celery.worker.consumer.consumer': { # Celery worker consumer details
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
-        'celery.app.autoreload': {
+        'celery.beat': { # Celery beat scheduler logs
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
-        'celery.worker.consumer.consumer': {
+        'openai': { # OpenAI library logs
             'handlers': ['console'],
-            'level': 'INFO',
+            'level': 'INFO', # Keep OpenAI logging at INFO or WARNING
             'propagate': False,
         },
-        'openai': {
+        'httpx': { # HTTPX library (used by OpenAI client)
+            'handlers': ['console'],
+            'level': 'WARNING', # Suppress verbose HTTPX logs unless debugging network
+            'propagate': False,
+        },
+        'daphne': { # Daphne server logs
+            'handlers': ['console'],
+            'level': 'INFO', # Keep Daphne logs at INFO for general operation
+            'propagate': False,
+        },
+        'urllib3': { # Used by requests/httpx
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'asyncio': { # Python's asyncio library
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
